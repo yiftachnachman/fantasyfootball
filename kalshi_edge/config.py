@@ -14,7 +14,9 @@ class Settings:
     # --- Elo model ---
     elo_initial: float = 1500.0
     elo_k: float = 20.0
-    elo_home_field: float = 55.0  # ~2.2 points at 25 Elo/point
+    elo_home_field: float = 39.0  # ~1.6 points at 25 Elo/point -- fit against
+    # Vegas closing spread_line over 2023-2025 (see backtest.py); zeroes out
+    # a small (+0.63 pt) mean bias found there, nothing more dramatic.
     elo_points_per_elo: float = 25.0  # conversion: Elo diff / this = point spread
     elo_mov_multiplier: bool = True  # scale K by how lopsided the result was
 

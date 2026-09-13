@@ -77,6 +77,25 @@ covered by unit tests with no network dependency:
 pytest
 ```
 
+## Checking calibration
+
+`python -m kalshi_edge.backtest` compares the model's predicted
+margin/total against Vegas's actual closing lines (`spread_line` /
+`total_line`, both included in nflreadpy's schedule data) across whatever
+seasons you point it at. Vegas closing lines are about as efficient a
+benchmark as exists, so a systematic (not just noisy) disagreement there
+is a real calibration bug worth fixing — as opposed to disagreeing with
+Kalshi itself, which just as easily means the *model* is wrong, not the
+market.
+
+As of this writing: predicted margin has ~0 bias against Vegas (std ~5.6
+pts — the model and Vegas simply disagree by that much on a typical
+game, since this model has no injury/weather/beat-reporter information),
+and predicted total runs about +1 point high on average (small, but
+statistically real — worth investigating if you extend `nfl_ratings.py`).
+`config.elo_home_field` was fit using this script; rerun it before trusting
+`min-edge` output if you change `nfl_ratings.py` or roll to new seasons.
+
 ## How market parsing actually works (verified against a live pull)
 
 The sandbox that wrote the first version of this tool couldn't reach
