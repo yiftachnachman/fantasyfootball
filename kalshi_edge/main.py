@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         # Always the current season only -- depth-chart/injury history from
         # prior years isn't relevant to "who is the QB right now", and
         # mixing seasons would break the baseline-vs-current comparison.
-        context = build_context(seasons=[pd.Timestamp.utcnow().year])
+        context = build_context(seasons=[pd.Timestamp.now("UTC").year])
         changed = [
             f"{team} ({context.current_qb1_name.get(team, '?')})"
             for team in context.current_qb1
