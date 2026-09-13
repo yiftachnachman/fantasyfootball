@@ -77,30 +77,37 @@ covered by unit tests with no network dependency:
 pytest
 ```
 
-## Known limitation — verify market parsing against live data
+## How market parsing actually works (verified against a live pull)
 
-I could not reach `api.elections.kalshi.com` from the sandbox that wrote
-this code (network policy blocks it), so `market_matcher.py` was written
-against my best understanding of Kalshi's market schema, not verified
-against a live response. Specifically:
+The sandbox that wrote the first version of this tool couldn't reach
+Kalshi's API, so the original `market_matcher.py` was a best guess and
+matched 0 of 724 live contracts on first real use. It's since been
+rewritten against real API responses and verified end-to-end. Notable
+things that differ from the naive assumption:
 
-- Team names are matched by searching `title` / `event_ticker` /
-  `yes_sub_title` text for city/nickname keywords (see `TEAM_NAMES` in
-  `market_matcher.py`), rather than parsing the ticker structure, since
-  ticker formats are more likely to change/vary than plain-English titles.
-- Spread/total lines are read from `floor_strike` / `cap_strike` first,
-  falling back to a regex over the title text.
-- Home/away is inferred from an "X at Y" / "X vs Y" pattern in the title.
+- **Prices** come back as decimal-dollar strings (`yes_ask_dollars =
+  "0.6300"`), not a plain cents integer.
+- **Title text names only one team** ("Kansas City wins", "Detroit wins
+  by over 7.5 points?") — there's no "X at Y" pattern to parse, and
+  Kalshi's market data never states which team is home.
+- **Team identity comes from ticker structure, not text.** The final
+  ticker segment names the contract's team directly (`...-KC`,
+  `...-DET8`), and the event ticker's matchup code (`26SEP20INDKC` = date
+  + concatenated team codes) lets you recover the opponent by
+  subtracting the known team's code from either end — no fuzzy string
+  matching needed. `rules_primary` text ("NY Giants vs LA Rams") is kept
+  only as a fallback for total markets, which have no per-team ticker
+  suffix.
+- **Home/away is resolved against the real NFL schedule** (via
+  `nflreadpy`), not guessed from Kalshi text: `TeamRatings.matchups` maps
+  each team pair to every scheduled meeting (played or not — future weeks
+  already have home/away assigned), and `market_matcher` looks up the one
+  closest to the ticker's date.
 
-Before trusting the output, run `python -m kalshi_edge.main --dump-unmatched`
-against live markets and check that nothing you expected to see got
-skipped. If Kalshi's actual field format differs, the fix is localized to
-`market_matcher.py` (`find_team`, `parse_matchup`, `_line_from_market`).
-
-By contrast, `nfl_ratings.py` (via `nflreadpy`, which pulls from
-nflverse's GitHub-hosted data) and all the math in `probability.py` /
-`kelly.py` *were* run and validated end-to-end against live data from
-this sandbox — those parts you can trust as-is.
+If Kalshi changes their schema again, `python -m kalshi_edge.main
+--dump-unmatched` prints a specific reason per skipped row (e.g. "no
+schedule match for KC vs IND"), which is exactly what surfaced these
+issues the first time.
 
 ## Before betting real money
 

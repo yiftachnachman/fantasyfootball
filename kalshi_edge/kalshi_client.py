@@ -35,13 +35,18 @@ MARKET_FIELDS = (
     "subtitle",
     "yes_sub_title",
     "no_sub_title",
-    "yes_bid",
-    "yes_ask",
-    "no_bid",
-    "no_ask",
-    "last_price",
-    "volume",
-    "open_interest",
+    "rules_primary",
+    # Kalshi returns prices as decimal-dollar strings, e.g. "0.2400" for
+    # 24 cents -- NOT as the plain cents-integer fields ("yes_bid",
+    # "yes_ask") an older API version used. See market_matcher.py for the
+    # dollars-string -> cents conversion.
+    "yes_bid_dollars",
+    "yes_ask_dollars",
+    "no_bid_dollars",
+    "no_ask_dollars",
+    "last_price_dollars",
+    "volume_fp",
+    "open_interest_fp",
     "floor_strike",
     "cap_strike",
     "strike_type",
@@ -77,10 +82,10 @@ def markets_to_df(markets: list[dict[str, Any]], bet_type: str) -> pd.DataFrame:
     """Flatten raw market dicts into a tidy frame, keeping only fields the
     edge-matching logic needs (see market_matcher.py for how these are used).
 
-    Prices are in cents (1-99), which double as the implied probability of
-    the "yes" side -- a yes_ask of 63 means it costs 63 cents to buy a
-    contract that pays $1 if "yes" happens, i.e. the market prices that
-    side at roughly 63%.
+    Prices come back as decimal-dollar strings (e.g. yes_ask_dollars =
+    "0.6300"), which double as the implied probability of the "yes" side --
+    it costs 63 cents to buy a contract that pays $1 if "yes" happens, i.e.
+    the market prices that side at roughly 63%.
     """
     rows = [{field: m.get(field) for field in MARKET_FIELDS} for m in markets]
     df = pd.DataFrame(rows, columns=list(MARKET_FIELDS))

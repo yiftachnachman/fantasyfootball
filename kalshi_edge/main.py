@@ -42,20 +42,21 @@ def main(argv: list[str] | None = None) -> int:
     markets = pull_all_nfl_markets()
     print(f"  {len(markets)} open contracts across {markets['bet_type'].nunique()} bet types")
 
-    if args.dump_unmatched:
-        from .market_matcher import parse_matchup, find_team
-
-        for m in markets.to_dict("records"):
-            away, home = parse_matchup(m.get("event_ticker", ""), m.get("title", ""))
-            team = find_team(m.get("yes_sub_title") or "")
-            if home is None or away is None or (m["bet_type"] != "total" and team is None):
-                print(f"[unmatched] {m['bet_type']:9s} ticker={m['ticker']!r} "
-                      f"title={m['title']!r} yes_sub_title={m.get('yes_sub_title')!r} "
-                      f"floor_strike={m.get('floor_strike')!r}")
-        return 0
-
     print(f"Building team ratings from the last {SETTINGS.seasons_of_history} seasons of nflreadpy history...")
     ratings = build_ratings(seasons=args.seasons)
+
+    if args.dump_unmatched:
+        from .market_matcher import unmatched_reason
+
+        unmatched_count = 0
+        for m in markets.to_dict("records"):
+            reason = unmatched_reason(m, ratings)
+            if reason:
+                unmatched_count += 1
+                print(f"[unmatched: {reason}] {m['bet_type']:9s} ticker={m['ticker']!r} "
+                      f"title={m['title']!r} rules_primary={m.get('rules_primary')!r}")
+        print(f"\n{unmatched_count} of {len(markets)} markets unmatched.")
+        return 0
 
     print("Scoring markets against the model...")
     edges = evaluate_markets(markets, ratings)

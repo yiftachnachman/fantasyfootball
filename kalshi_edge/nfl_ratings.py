@@ -58,6 +58,28 @@ class TeamRatings:
     recent_scored: dict[str, deque] = field(default_factory=lambda: defaultdict(lambda: deque(maxlen=SETTINGS.scoring_lookback_games)))
     recent_allowed: dict[str, deque] = field(default_factory=lambda: defaultdict(lambda: deque(maxlen=SETTINGS.scoring_lookback_games)))
     league_avg_points: float = 22.0
+    # Kalshi's market data never says which team is home -- only the two
+    # teams and the game date. This maps {team_a, team_b} -> every
+    # scheduled meeting between them (gameday, home_team, away_team),
+    # played or not, so market_matcher can look up the real home/away
+    # assignment instead of guessing from ticker/title text order.
+    matchups: dict[frozenset, list[tuple]] = field(default_factory=dict)
+
+    def resolve_home_away(self, team_a: str, team_b: str, near_date=None) -> tuple[str, str] | None:
+        """Return (home_team, away_team) for the meeting between team_a
+        and team_b closest to near_date (or the only/most recent meeting
+        if near_date is None). None if they don't appear to have played
+        or be scheduled to play each other in the loaded seasons.
+        """
+        key = frozenset({normalize_team(team_a), normalize_team(team_b)})
+        candidates = self.matchups.get(key)
+        if not candidates:
+            return None
+        if near_date is None:
+            gameday, home, away = candidates[-1]
+        else:
+            gameday, home, away = min(candidates, key=lambda c: abs((c[0] - near_date).days))
+        return home, away
 
     def get_elo(self, team: str) -> float:
         return self.elo.get(normalize_team(team), SETTINGS.elo_initial)
@@ -116,11 +138,23 @@ def build_ratings(seasons: list[int] | None = None) -> TeamRatings:
         seasons = list(range(current_year - SETTINGS.seasons_of_history + 1, current_year + 1))
 
     schedules = _load_schedules(seasons)
-    played = schedules.dropna(subset=["home_score", "away_score"]).copy()
-    played["gameday"] = pd.to_datetime(played["gameday"])
-    played = played.sort_values(["gameday", "week"])
+    schedules = schedules.copy()
+    schedules["gameday"] = pd.to_datetime(schedules["gameday"])
 
     ratings = TeamRatings()
+
+    # Every scheduled matchup (played or not) feeds the home/away lookup --
+    # future games already have home_team/away_team assigned even before
+    # they're played.
+    matchups: dict[frozenset, list[tuple]] = defaultdict(list)
+    for row in schedules.itertuples():
+        home, away = normalize_team(row.home_team), normalize_team(row.away_team)
+        matchups[frozenset({home, away})].append((row.gameday, home, away))
+    ratings.matchups = dict(matchups)
+
+    played = schedules.dropna(subset=["home_score", "away_score"]).copy()
+    played = played.sort_values(["gameday", "week"])
+
     all_scores = pd.concat([played["home_score"], played["away_score"]])
     if len(all_scores):
         ratings.league_avg_points = float(all_scores.mean())
