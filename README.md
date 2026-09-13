@@ -158,10 +158,11 @@ predicted-total shift (weather):
 
 Enabled by default; pass `--no-situational` to `main.py` to score with
 the base model only. Every signal fails open (a lookup error contributes
-zero adjustment, never a crash). The QB/injury logic was run against live
-2026 data while building it; **the Open-Meteo call was not reachable from
-this sandbox** (same restriction that blocks Kalshi -- see below) and
-needs verification on a machine with real internet access.
+zero adjustment, never a crash). All three signals -- QB status, injuries,
+and the Open-Meteo weather call -- have been verified against live data:
+the sandbox that wrote this code couldn't reach Open-Meteo itself, but a
+run on a machine with real internet confirmed it returns real forecasts
+and correctly reduces predicted totals for rain/wind/cold.
 
 ## Before betting real money
 
