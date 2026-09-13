@@ -19,6 +19,16 @@ class Settings:
     # a small (+0.63 pt) mean bias found there, nothing more dramatic.
     elo_points_per_elo: float = 25.0  # conversion: Elo diff / this = point spread
     elo_mov_multiplier: bool = True  # scale K by how lopsided the result was
+    # Fraction of each team's Elo pulled back toward elo_initial at every
+    # season transition (roster turnover means a rating at season's end is
+    # a stale estimate of strength at next season's start). 1/3 matches
+    # 538's published NFL Elo methodology, and independently minimizes
+    # Brier score (0.2301 -> 0.2224) and fixes a real tail-miscalibration
+    # problem in a 2011-2025 walk-forward backtest: at regression=0, games
+    # the model scored 10-30% likely actually happened 36.9% of the time
+    # (badly overconfident); at 1/3 that gap nearly vanishes (26.0% vs
+    # 25.3%). See backtest_outcomes.py to reproduce.
+    elo_season_regression: float = 1 / 3
 
     # --- history window ---
     seasons_of_history: int = 4  # trailing seasons used to seed/update ratings
@@ -26,8 +36,17 @@ class Settings:
 
     # --- outcome variance (points), used to turn a predicted margin/total
     # into a cover/over probability via the normal CDF ---
-    margin_sigma: float = 13.86
-    total_sigma: float = 10.5
+    # Fit to THIS model's own walk-forward residual std against actual
+    # outcomes (2011-2025, n=4083; see backtest_outcomes.py), not a
+    # generic "NFL variance" literature figure. total_sigma in particular
+    # was badly off as a borrowed prior (10.5): a simple off/def-average
+    # total prediction carries a lot more of its own estimation noise than
+    # the tighter total_sigma an all-information source like a real
+    # sportsbook's own line would justify, and using too small a sigma
+    # here made every over/under probability overconfident (pushed too
+    # far from 50%). margin_sigma was already close (13.86 vs 13.50).
+    margin_sigma: float = 13.5
+    total_sigma: float = 13.7
 
     # --- staking ---
     bankroll: float = 1000.0

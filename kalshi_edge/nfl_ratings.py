@@ -129,12 +129,39 @@ def _mov_multiplier(elo_diff_pre: float, margin: float) -> float:
     return ((abs(margin) + 3) ** 0.8) / (7.5 + 0.006 * abs(elo_diff_pre))
 
 
-def build_ratings(seasons: list[int] | None = None) -> TeamRatings:
+def _regress_toward_mean(ratings: TeamRatings) -> None:
+    """Applied once at each season transition: pulls every team's Elo
+    partway back toward the initial rating, since roster turnover means a
+    team's rating at the end of one season is a stale estimate of its
+    strength at the start of the next. Standard practice (538's NFL Elo
+    does the same); see config.elo_season_regression."""
+    frac = SETTINGS.elo_season_regression
+    if not frac:
+        return
+    for team in list(ratings.elo.keys()):
+        ratings.elo[team] = SETTINGS.elo_initial + (ratings.elo[team] - SETTINGS.elo_initial) * (1 - frac)
+
+
+def build_ratings(
+    seasons: list[int] | None = None,
+    record_predictions: bool = False,
+) -> TeamRatings | tuple[TeamRatings, pd.DataFrame]:
     """Walk completed games in chronological order, updating Elo and
     rolling scoring averages after each result.
+
+    If record_predictions is True, also returns a DataFrame with one row
+    per completed game, holding the model's prediction made using ONLY
+    information available before that game (current Elo/scoring-average
+    state, before that game's own result is folded in) plus the actual
+    outcome and Vegas's closing lines. This is what a true walk-forward
+    backtest needs -- see backtest_outcomes.py. Using the final,
+    all-seasons-included ratings to "predict" earlier games in the same
+    window (as an easy first pass might) leaks the future into the past
+    and overstates accuracy; this avoids that by construction, since the
+    prediction is captured before the update step below runs.
     """
     if seasons is None:
-        current_year = pd.Timestamp.utcnow().year
+        current_year = pd.Timestamp.now("UTC").year
         seasons = list(range(current_year - SETTINGS.seasons_of_history + 1, current_year + 1))
 
     schedules = _load_schedules(seasons)
@@ -155,13 +182,32 @@ def build_ratings(seasons: list[int] | None = None) -> TeamRatings:
     played = schedules.dropna(subset=["home_score", "away_score"]).copy()
     played = played.sort_values(["gameday", "week"])
 
-    all_scores = pd.concat([played["home_score"], played["away_score"]])
-    if len(all_scores):
-        ratings.league_avg_points = float(all_scores.mean())
+    predictions: list[dict] = [] if record_predictions else None
+    points_sum, points_n = 0.0, 0
+    current_season = None
 
     for row in played.itertuples():
         home, away = normalize_team(row.home_team), normalize_team(row.away_team)
         home_score, away_score = float(row.home_score), float(row.away_score)
+
+        if current_season is not None and row.season != current_season:
+            _regress_toward_mean(ratings)
+        current_season = row.season
+
+        if record_predictions:
+            pred = ratings.predict_game(home, away)  # pre-update state only -- no leakage
+            predictions.append({
+                "season": row.season,
+                "week": row.week,
+                "gameday": row.gameday,
+                "home_team": home,
+                "away_team": away,
+                "home_score": home_score,
+                "away_score": away_score,
+                "spread_line": getattr(row, "spread_line", None),
+                "total_line": getattr(row, "total_line", None),
+                **pred,
+            })
 
         home_elo = ratings.elo.get(home, SETTINGS.elo_initial)
         away_elo = ratings.elo.get(away, SETTINGS.elo_initial)
@@ -182,4 +228,10 @@ def build_ratings(seasons: list[int] | None = None) -> TeamRatings:
         ratings.recent_scored[away].append(away_score)
         ratings.recent_allowed[away].append(home_score)
 
+        points_sum += home_score + away_score
+        points_n += 2
+        ratings.league_avg_points = points_sum / points_n
+
+    if record_predictions:
+        return ratings, pd.DataFrame(predictions)
     return ratings

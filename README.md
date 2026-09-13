@@ -77,6 +77,76 @@ covered by unit tests with no network dependency:
 pytest
 ```
 
+## Model tightening (validated against 15 seasons of real outcomes)
+
+`kalshi_edge/backtest_outcomes.py` is a proper walk-forward backtest: it
+uses `build_ratings(..., record_predictions=True)`, which captures each
+game's prediction from only the information available *before* that game
+(current Elo/scoring state, prior to that game's own result being folded
+in) -- unlike naively scoring historical games with final, all-seasons
+ratings, which leaks the future into the past and overstates accuracy.
+Run it yourself:
+
+```bash
+python -m kalshi_edge.backtest_outcomes
+python -m kalshi_edge.backtest_outcomes --seasons 2015 2016 ... 2025 --min-edge 0.05
+```
+
+Using this tool against 2011-2025 (n≈4,000 games), two real, evidence-backed
+changes were made:
+
+1. **Elo now regresses 1/3 toward the mean at every season transition**
+   (`config.elo_season_regression`, was 0 i.e. off). Without it, games the
+   model called 10-30% likely actually happened ~37% of the time --
+   badly overconfident, because a team's rating carries over between
+   seasons with no discount for roster turnover. Testing regression
+   fractions from 0 to 0.45 found 1/3 minimized Brier score (0.2301 ->
+   0.2224) and fixed that miscalibration almost exactly (predicted 26.0%
+   vs actual 25.3% in that same bucket) -- also matching 538's published
+   NFL Elo methodology, independently confirmed here rather than just
+   borrowed.
+2. **`margin_sigma`/`total_sigma` are now fit to this model's own
+   walk-forward residual std against actual outcomes** (13.5 and 13.7),
+   not generic literature figures (13.86 and 10.5). `total_sigma` in
+   particular was badly off: the simple off/def scoring-average blend
+   this model uses for totals carries meaningfully more of its own
+   estimation noise than a tight literature prior assumes, and using too
+   small a sigma made every over/under probability overconfident.
+
+One thing investigated but deliberately **not** changed: the model's
+predicted_total ran ~0.45-1 pt higher than Vegas's total_line. Checking
+against actual game totals (not Vegas) showed the model is
+unbiased against reality (-0.002 pts mean error); it's Vegas's own total
+line that runs low (-0.455 pts vs actual) -- a well-documented effect
+where books shade totals down because the public leans "over." Chasing
+that number would mean deliberately introducing a real bias just to
+match a benchmark's own known skew, so predicted_total was left alone.
+
+### What this backtest says about beating Kalshi/Vegas
+
+Read the output carefully -- it separates two different questions that
+are easy to conflate:
+
+- **Is the model's own probability an accurate description of reality?**
+  Yes, reasonably -- the moneyline calibration table (predicted vs. actual
+  win rate by decile) tracks closely, and Brier score (0.222) beats a
+  coin flip (0.25).
+- **Does disagreeing with Vegas's closing line predict beating it?** No.
+  The spread/total ATS win rates hover at 49-51% (breakeven at standard
+  -110 odds is 52.38%) and, tellingly, the calibration curves against
+  Vegas are close to *flat* -- games the model was 70-80% confident in
+  beat the Vegas line at about the same rate as games it was 40-50%
+  confident in. That's the expected signature of "no extractable edge
+  against a sharp closing line," not a bug: Vegas already incorporates
+  most of what this model knows (and much it doesn't -- real injury
+  reports, coaching intel, line movement from sharp money). A
+  well-calibrated model and a market-beating model are not the same
+  thing, and this one is (evidence says) the former, not the latter,
+  against Vegas specifically. Real performance against Kalshi's thinner,
+  less professionally-priced markets could differ -- that's an empirical
+  question this backtest can't answer, since historical Kalshi prices
+  for past seasons don't exist to test against.
+
 ## Checking calibration
 
 `python -m kalshi_edge.backtest` compares the model's predicted
@@ -88,11 +158,14 @@ is a real calibration bug worth fixing — as opposed to disagreeing with
 Kalshi itself, which just as easily means the *model* is wrong, not the
 market.
 
-As of this writing: predicted margin has ~0 bias against Vegas (std ~5.6
+As of this writing: predicted margin has ~0 bias against Vegas (std ~5.5
 pts — the model and Vegas simply disagree by that much on a typical
-game, since this model has no injury/weather/beat-reporter information),
-and predicted total runs about +1 point high on average (small, but
-statistically real — worth investigating if you extend `nfl_ratings.py`).
+game, since this model has no injury/weather/beat-reporter information).
+Predicted total runs a bit high against Vegas's line specifically, but
+that's Vegas's line being shaded, not a model bug -- see "Model
+tightening" below for the investigation and `backtest_outcomes.py` for a
+proper accuracy/ROI backtest against real outcomes (this script only
+checks bias against Vegas, a narrower and different question).
 `config.elo_home_field` was fit using this script; rerun it before trusting
 `min-edge` output if you change `nfl_ratings.py` or roll to new seasons.
 
