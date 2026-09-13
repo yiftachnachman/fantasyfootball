@@ -1,0 +1,5 @@
+requests
+pandas
+nflreadpy
+pyarrow   # needed for nflreadpy's polars -> pandas conversion
+pytest    # dev/test only
