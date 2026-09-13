@@ -128,6 +128,41 @@ If Kalshi changes their schema again, `python -m kalshi_edge.main
 schedule match for KC vs IND"), which is exactly what surfaced these
 issues the first time.
 
+## Situational adjustments (QB status, injuries, weather)
+
+`kalshi_edge/situational.py` layers three signals on top of the base
+Elo/scoring model, each as an Elo-point penalty (QB/other injuries) or a
+predicted-total shift (weather):
+
+- **QB status**: detected from `nflreadpy.load_depth_charts()`, not the
+  weekly injury report (which lags -- verified live: on 2026-09-13 it only
+  covered week 1 while week 2 markets were already open). A team's
+  *current* depth-chart QB1 is compared against who was QB1 at the start
+  of the regular season (~Sept 1) to catch an in-season change. That
+  cutoff matters: comparing against the full offseason instead flagged 4
+  ordinary free-agency signings as if they were injury news, confirmed
+  live before the fix went in. The weekly injury report still contributes
+  a smaller "Questionable" tier and an "Out/Doubtful" tier, but *only* for
+  the specific week each market is about (`week_for_date`, matched
+  against the schedule) -- applying one week's report to a different
+  week's game is a real bug (also caught live: week 1 had Miami's
+  starting QB listed Out, which must not bleed into week 2+ markets).
+- **Other injuries**: a coarse count of non-QB "Out" starters, same
+  week-scoping, capped at a small total Elo effect (`config.py`) -- this
+  is a low-confidence signal by design; it can't tell a franchise left
+  tackle from a backup long-snapper being out.
+- **Weather**: outdoor-stadium games (see `situational.DOME_TEAMS`) get a
+  live forecast from Open-Meteo (free, no API key), reducing predicted
+  total for high wind/precipitation/cold. Domes and retractable-roof
+  stadiums are excluded entirely rather than guessed at.
+
+Enabled by default; pass `--no-situational` to `main.py` to score with
+the base model only. Every signal fails open (a lookup error contributes
+zero adjustment, never a crash). The QB/injury logic was run against live
+2026 data while building it; **the Open-Meteo call was not reachable from
+this sandbox** (same restriction that blocks Kalshi -- see below) and
+needs verification on a machine with real internet access.
+
 ## Before betting real money
 
 - Backtest: run the model against closed markets / historical lines and

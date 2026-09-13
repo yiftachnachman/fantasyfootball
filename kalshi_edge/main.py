@@ -5,6 +5,7 @@ Usage:
     python -m kalshi_edge.main
     python -m kalshi_edge.main --min-edge 0.05 --bankroll 500
     python -m kalshi_edge.main --dump-unmatched   # inspect rows the parser skipped
+    python -m kalshi_edge.main --no-situational   # base model only, skip QB/injury/weather adjustments
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--out", default="nfl_edges.csv", help="CSV path for the full ranked output")
     p.add_argument("--dump-unmatched", action="store_true",
                     help="print raw fields for markets the parser couldn't match, then exit")
+    p.add_argument("--no-situational", action="store_true",
+                    help="skip QB-status/injury/weather adjustments, score with the base model only")
     return p.parse_args(argv)
 
 
@@ -58,8 +61,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{unmatched_count} of {len(markets)} markets unmatched.")
         return 0
 
+    context = None
+    if not args.no_situational:
+        print("Building situational context (QB status, injuries, weather)...")
+        from .situational import build_context
+
+        # Always the current season only -- depth-chart/injury history from
+        # prior years isn't relevant to "who is the QB right now", and
+        # mixing seasons would break the baseline-vs-current comparison.
+        context = build_context(seasons=[pd.Timestamp.utcnow().year])
+        changed = [
+            f"{team} ({context.current_qb1_name.get(team, '?')})"
+            for team in context.current_qb1
+            if context.qb_penalty_elo(team) > 0
+        ]
+        if changed:
+            print(f"  QB-situation adjustment applied for: {', '.join(sorted(changed))}")
+        else:
+            print("  No QB-situation adjustments detected.")
+
     print("Scoring markets against the model...")
-    edges = evaluate_markets(markets, ratings)
+    edges = evaluate_markets(markets, ratings, context=context)
     if edges.empty:
         print("No markets could be matched to the model. Run with --dump-unmatched "
               "to see the raw fields and adjust kalshi_edge/market_matcher.py.")

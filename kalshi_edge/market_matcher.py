@@ -243,12 +243,43 @@ class EdgeRow:
     edge: float
 
 
-def evaluate_markets(markets_df: pd.DataFrame, ratings: TeamRatings) -> pd.DataFrame:
+def _resolve_home_away_for_market(m: dict, ratings: TeamRatings, event_date) -> tuple[str, str, str | None] | None:
+    """Returns (home, away, own_team) for any bet_type. own_team is None
+    for total markets, which have no single team the contract is about."""
+    bet_type = m.get("bet_type")
+    if bet_type in ("moneyline", "spread"):
+        own_team = team_from_ticker_suffix(m.get("ticker", ""))
+        teams = _matchup_teams(m, own_team)
+        if not (own_team and teams):
+            return None
+        opponent = teams[1] if normalize_team(teams[0]) == normalize_team(own_team) else teams[0]
+        home_away = ratings.resolve_home_away(own_team, opponent, near_date=event_date)
+        if home_away is None:
+            return None
+        return home_away[0], home_away[1], own_team
+
+    if bet_type == "total":
+        teams = _matchup_teams(m, None)
+        if not teams:
+            return None
+        home_away = ratings.resolve_home_away(teams[0], teams[1], near_date=event_date)
+        if home_away is None:
+            return None
+        return home_away[0], home_away[1], None
+
+    return None
+
+
+def evaluate_markets(markets_df: pd.DataFrame, ratings: TeamRatings, context=None) -> pd.DataFrame:
     """Compute model probability, market-implied probability, and edge for
     every market row we can resolve to a real matchup. Rows we can't (no
     schedule match, unrecognized ticker shape, ...) are dropped from the
     output but not from the input frame -- run with --dump-unmatched to
     inspect them.
+
+    `context`, if given a situational.SituationalContext, layers QB/injury
+    and weather adjustments onto the base Elo/scoring-average prediction
+    (see situational.py). Omit it (the default) to use the base model only.
     """
     results: list[EdgeRow] = []
 
@@ -263,39 +294,37 @@ def evaluate_markets(markets_df: pd.DataFrame, ratings: TeamRatings) -> pd.DataF
             continue
 
         event_date = parse_event_date(m.get("event_ticker", ""))
+        resolved = _resolve_home_away_for_market(m, ratings, event_date)
+        if resolved is None:
+            continue
+        home, away, own_team = resolved
+        pred = ratings.predict_game(home, away)
 
-        if bet_type in ("moneyline", "spread"):
-            own_team = team_from_ticker_suffix(m.get("ticker", ""))
-            teams = _matchup_teams(m, own_team)
-            if not (own_team and teams):
-                continue
-            opponent = teams[1] if normalize_team(teams[0]) == normalize_team(own_team) else teams[0]
-            home_away = ratings.resolve_home_away(own_team, opponent, near_date=event_date)
-            if home_away is None:
-                continue
-            home, away = home_away
-            pred = ratings.predict_game(home, away)
+        if context is not None:
+            from .situational import adjust_prediction
 
-            if bet_type == "moneyline":
-                model_prob = pred["home_win_prob"] if normalize_team(own_team) == normalize_team(home) else pred["away_win_prob"]
-                side = f"{own_team} to win"
-            else:  # spread
-                line = _line_from_market(m)
-                if line is None:
-                    continue
-                team_margin = pred["predicted_margin"] if normalize_team(own_team) == normalize_team(home) else -pred["predicted_margin"]
-                model_prob = cover_probability(team_margin, line)
-                side = f"{own_team} covers {line:+.1f}"
+            week = context.week_for_date(event_date)
+            home_penalty = context.qb_penalty_elo(home, week) + context.key_injury_penalty_elo(home, week)
+            away_penalty = context.qb_penalty_elo(away, week) + context.key_injury_penalty_elo(away, week)
+            total_delta = context.weather_total_delta(home, event_date)
+            pred = adjust_prediction(pred, home_penalty, away_penalty, total_delta)
 
-        elif bet_type == "total":
-            teams = _matchup_teams(m, None)
+        if bet_type == "moneyline":
+            model_prob = pred["home_win_prob"] if normalize_team(own_team) == normalize_team(home) else pred["away_win_prob"]
+            side = f"{own_team} to win"
+        elif bet_type == "spread":
             line = _line_from_market(m)
-            if not (teams and line is not None):
+            if line is None:
                 continue
-            pred = ratings.predict_game(*teams)  # order doesn't affect predicted_total
+            team_margin = pred["predicted_margin"] if normalize_team(own_team) == normalize_team(home) else -pred["predicted_margin"]
+            model_prob = cover_probability(team_margin, line)
+            side = f"{own_team} covers {line:+.1f}"
+        elif bet_type == "total":
+            line = _line_from_market(m)
+            if line is None:
+                continue
             model_prob = over_probability(pred["predicted_total"], line)
             side = f"Over {line:.1f}"
-
         else:
             continue
 
@@ -339,6 +368,9 @@ def unmatched_reason(m: dict, ratings: TeamRatings) -> str | None:
         teams = _matchup_teams(m, None)
         if not teams:
             return "couldn't determine matchup teams"
+        event_date = parse_event_date(m.get("event_ticker", ""))
+        if ratings.resolve_home_away(teams[0], teams[1], near_date=event_date) is None:
+            return f"no schedule match for {teams[0]} vs {teams[1]}"
         if _line_from_market(m) is None:
             return "no total line found"
         return None

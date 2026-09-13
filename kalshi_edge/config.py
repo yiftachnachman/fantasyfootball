@@ -38,5 +38,27 @@ class Settings:
 
     seed_bankroll_currency: str = "USD"
 
+    # --- situational adjustments (QB status, other injuries, weather) ---
+    # A QB change (current depth-chart QB1 differs from who started the
+    # season, or the current QB1 is reported Out/Doubtful) is worth several
+    # points of spread -- this is a rough, undifferentiated estimate (a
+    # change to a good backup costs less than to a bad one; we can't tell
+    # those apart here), not fit against data the way elo_home_field was.
+    qb_change_elo_penalty: float = 100.0  # ~4 pts at 25 elo/point
+    qb_questionable_elo_penalty: float = 40.0  # ~1.6 pts -- partial risk, most Questionables play
+    key_injury_elo_penalty_each: float = 6.0  # ~0.24 pts per non-QB "Out" starter
+    key_injury_elo_penalty_cap: float = 30.0  # ~1.2 pts max from non-QB injuries combined
+
+    # Weather (outdoor stadiums only -- see situational.DOME_TEAMS), applied
+    # to predicted_total only. Coefficients are rough literature priors
+    # (wind hurts passing/scoring; heavy precip and cold do too), not fit.
+    weather_wind_threshold_mph: float = 15.0
+    weather_wind_coeff: float = 0.15  # total points removed per mph over threshold
+    weather_precip_threshold_mm: float = 2.0
+    weather_precip_total_penalty: float = 3.0
+    weather_cold_threshold_f: float = 32.0
+    weather_cold_coeff: float = 0.05  # total points removed per degree under threshold
+    weather_total_delta_cap: float = 8.0  # max combined weather reduction to predicted_total
+
 
 SETTINGS = Settings()
